@@ -6,14 +6,16 @@ import time
 from twython import *
 from twython.exceptions import TwythonError, TwythonRateLimitError
 
+from core.exceptions import DoNotCallOtherScripts
+from core.utils import farsi_tools
 from core.utils.sample_twitter_responses import sample_tweet, sample_direct_message
-
 from core.utils.singleton import Singleton
 from core.utils.logging import log
-from core import settings, script_loader
+from core import script_loader
+import settings
 
 
-class ParseStreamingData():
+class DataParser():
     @staticmethod
     def get_type_of_data(data):
         keys = list(data.keys())
@@ -37,12 +39,21 @@ class ParseStreamingData():
         return None
 
 
-class StreamingSingleton(TwythonStreamer, metaclass=Singleton):
+def normalize_data(data):
+    type = DataParser.get_type_of_data(data)
+    if type == 'timeline_update':
+        data['text'] = farsi_tools.normalize(data['text'])
+    elif type == 'direct_message':
+        data['direct_message']['text'] = farsi_tools.normalize(data['direct_message']['text'])
+    return data
+
+
+class EventDispatcherSingleton(TwythonStreamer, metaclass=Singleton):
     # dict of events to list of subscribing script instances
     scripts = {}
 
     def __init__(self, *args, **kwargs):
-        super(StreamingSingleton, self).__init__(
+        super(EventDispatcherSingleton, self).__init__(
             settings.CONSUMER_KEY, settings.CONSUMER_SECRET, settings.OAUTH_TOKEN, settings.OAUTH_TOKEN_SECRET,
             *args, **kwargs
         )
@@ -62,7 +73,8 @@ class StreamingSingleton(TwythonStreamer, metaclass=Singleton):
                 log("Loaded {0} for type {1}".format(script.__name__, event))
 
     def on_success(self, data):
-        data_type = ParseStreamingData.get_type_of_data(data)
+        data_type = DataParser.get_type_of_data(data)
+        data = normalize_data(data)
 
         if not data_type:
             log("Type of data unknown \n {0}".format(data))
@@ -70,12 +82,15 @@ class StreamingSingleton(TwythonStreamer, metaclass=Singleton):
 
         log("Data received, with type: " + data_type)
         log("Data: {0}".format(data))
+
         for script in self.scripts.setdefault(data_type, []):
             log("Data type: {1} script found: {0}".format(script.__class__.__name__, data_type))
             try:
                 getattr(script, 'on_' + data_type)(data)
+            except DoNotCallOtherScripts:
+                break
             except TwythonError as e:
-                log("Twython error when occured when running script {0}\nError is:{1}".format(
+                log("Twython error when occurred when running script {0}\nError is:{1}".format(
                     script.__class__.__name__, e))
 
     def on_error(self, status_code, data):
@@ -84,31 +99,36 @@ class StreamingSingleton(TwythonStreamer, metaclass=Singleton):
     def user(self, *args, **kwargs):
         while True:
             try:
-                super(StreamingSingleton, self).user(self, *args, **kwargs)
+                super(EventDispatcherSingleton, self).user(self, *args, **kwargs)
             except TwythonRateLimitError as e:
                 log("Rate limit error, asks to retry after {0}".format(e.retry_after))
                 time.sleep(min(int(e.retry_after), 5))
             except TwythonError as e:
                 log("Twython error {0}".format(e))
 
+    def terminate_scripts(self):
+        raise DoNotCallOtherScripts()
 
-class Testing(StreamingSingleton):
+
+class Testing(EventDispatcherSingleton):
     def __init__(self, *args, **kwargs):
         self.load_scripts()
 
     def user(self, *args, **kwargs):
         while True:
-            input_type = input("Enter a data type number \n 1. Timeline  \n 2. Direct Message \n 3. Custom data \n")
+            input_type = input(
+                "Enter a data type number or just tweet something \n 1. Direct Message \n 2. Custom data \n")
+
             if input_type == '1':
-                timeline_text = input("Enter a tweet\n")
-                data = sample_tweet
-                data['text'] = timeline_text
-            elif input_type == '2':
                 message_text = input("Enter a direct message to @" + settings.TWIZHOOSH_USERNAME + "\n")
                 data = sample_direct_message
                 data['direct_message']['text'] = message_text
-            else:
+            elif input_type == '2':
                 data = eval(input("Enter your data object \n"))
+            else:
+                timeline_text = input_type
+                data = sample_tweet
+                data['text'] = timeline_text
 
             self.on_success(data)
 
@@ -116,7 +136,7 @@ class Testing(StreamingSingleton):
 def run():
     if not settings.DEBUG:
         log("Starting streamer...")
-        stream = StreamingSingleton()
+        stream = EventDispatcherSingleton()
         stream.user(replies="all")
     else:
         stream = Testing()

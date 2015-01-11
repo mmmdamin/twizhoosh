@@ -1,7 +1,7 @@
 from abc import abstractmethod
 from random import randint
 
-from core import settings
+import settings
 from core.scripts.standalone.base import BaseStandaloneScript
 
 
@@ -17,8 +17,8 @@ class TweetPerDayBase(BaseStandaloneScript):
 
     def on_called(self):
         seconds_per_day = 24 * 60 * 60
-        num_of_calls = seconds_per_day / (settings.STAND_ALONE_REPEAT_TIME_CHUNKS * self.repeat_time)
+        calls_per_day = seconds_per_day / (settings.STAND_ALONE_REPEAT_TIME_CHUNKS * self.repeat_time)
 
-        if randint(0, num_of_calls) < self.expected_tweet_per_day:
+        if randint(0, calls_per_day) < self.expected_tweet_per_day:
             self.update()
         pass

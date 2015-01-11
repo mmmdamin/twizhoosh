@@ -5,13 +5,14 @@ from io import BytesIO
 import requests
 
 from core.scripts.twitter_related import on_demand
+from core.twitter_related_scripts_runner import EventDispatcherSingleton
 from core.utils.logging import log
 
 
 class Mustachify(on_demand.BaseOnTimelineDemandScript):
     command_pattern = '.*س(ی)?بیل.*'
 
-    def received_command(self, command, data):
+    def received_command(self, command, data, reply_function, *args, **kwargs):
         match = re.search(self.command_pattern, command)
 
         if match:
@@ -35,6 +36,8 @@ class Mustachify(on_demand.BaseOnTimelineDemandScript):
                     media=BytesIO(img),
                     in_reply_to_status_id=data['id_str']
                 )
+
+                EventDispatcherSingleton().terminate_scripts()
 
             else:
                 self.twitter.reply_to(data, ':)')
